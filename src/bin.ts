@@ -9,6 +9,7 @@ import { prune } from "@gltf-transform/functions";
 import { disposeMesh, setupIO, writeMesh } from "./gltf-io";
 import type { To3MF } from "./worker";
 import { addMesh } from "./worker";
+import { loadTSModuleOnChange } from "./moduleLoadingOnChange";
 
 const app = express();
 const port = 3000;
@@ -22,6 +23,8 @@ if (!manifoldEntryPoint) {
   process.exit(1);
 }
 
+let lastUpdatedTime: Date | undefined = undefined;
+
 const fullPath = path.join(workingDir, manifoldEntryPoint);
 
 app.get("/", (_req, res) => {
@@ -29,13 +32,18 @@ app.get("/", (_req, res) => {
   res.sendFile(__dirname + "/index.html");
 });
 
-app.listen(port, () => {
-  console.log(`Example app listening at http://localhost:${port} for file.`);
+app.get("/lastUpdatedTime", (_req, res) => {
+  // send the last updated time in a json object
+  res.json({ lastUpdatedTime });
 });
 
 app.get("/file", (req, res) => {
   // res.sendFile(__dirname + "/manifold-blob.glb");
   res.sendFile(workingDir + "/output.glb");
+});
+
+app.listen(port, () => {
+  console.log(`Example app listening at http://localhost:${port} for file.`);
 });
 
 const initiationTime = performance.now();
@@ -60,59 +68,24 @@ async function initalizeManifold() {
 
   const wasmSetupTime = performance.now() - initiationTime;
 
-  console.log(`Manifold WASM module loaded: ${wasmSetupTime}ms`);
+  console.log(`Manifold WASM module loaded: ${wasmSetupTime}ms\n\n\n`);
 
   const { Manifold } = wasm;
+
+  let cleanup: () => void | undefined;
+
   const writeToBlob = async function () {
-    // const userModule = await import(filename);
+    if (cleanup) {
+      cleanup();
+    }
 
-    console.log(fullPath);
+    console.log(`\n\n\nProcessing the file...${manifoldEntryPoint}`);
 
-    // Read and console.log the file contents
-    const fileContents = fs.readFileSync(fullPath, "utf-8");
-    console.log("\n\n\nInput Contents:");
-    console.log(fileContents);
-    console.log("\n");
-
-    const userModule = await tsImport.load(fullPath, {
-      mode: tsImport.LoadMode.Compile,
-      useCache: false,
-    });
-
-    const outputFilePath = path.join(
-      ".cache",
-      "ts-import",
-      workingDir,
-      "simpleCube.mjs"
-    );
-
-    const outputFileContent = fs.readFileSync(outputFilePath, "utf-8");
-
-    // Copy the file to the output directory
-    const randomName = Math.random().toString(36).substring(7);
-    const freshFileName = `${randomName}.mjs`;
-    const freshFilePath = path.join(workingDir, freshFileName);
-    fs.writeFileSync(freshFilePath, outputFileContent);
-
-    const freshFileContent = fs.readFileSync(outputFilePath, "utf-8");
-    console.log("\n\n\nFresh Output Contents:");
-    console.log(freshFileContent);
-    console.log("\n");
-
-    const _dynamicImportUserModule = Function(
-      `return import("${freshFilePath}")`
-    );
-
-    const freshModule = await _dynamicImportUserModule();
-    console.log("\n\n\nCached Function:");
-    console.log(freshModule.default.toString());
-    console.log("\n\n\n");
-
+    // Hot reload the user's manifold code
+    // Note: loadTSModuleOnChange has much shenanigans
+    const freshModule = await loadTSModuleOnChange(tsImport, fullPath);
+    cleanup = freshModule.cleanup;
     const userFunction = freshModule.default;
-
-    // console.log("\n\n\nUser Function:");
-    // console.log(userFunction.toString());
-    // console.log("\n\n\n");
 
     const result = userFunction(wasm);
 
@@ -157,7 +130,6 @@ async function initalizeManifold() {
     node.setMesh(mesh);
     addMesh(doc, to3mf, node, result);
     wrapper.addChild(node);
-    // to3mf.items.push({ objectID: `${object2globalID.get(result)}` });
 
     await doc.transform(prune());
 
@@ -171,6 +143,8 @@ async function initalizeManifold() {
 
     // Write to disk
     fs.writeFileSync("output.glb", buffer);
+
+    lastUpdatedTime = new Date();
   };
 
   return writeToBlob;
@@ -193,7 +167,7 @@ initalizeManifold().then((writeToBlob) => {
         writeToBlob();
 
         clearTimeout(timeoutId);
-      }, 400);
+      }, 4000);
     }
   };
 

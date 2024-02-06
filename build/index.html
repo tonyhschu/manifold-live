@@ -1,14 +1,38 @@
 <!DOCTYPE html>
 <html>
   <head>
-    <title>My First Webpage</title>
+    <title>ManifoldCAD Preview</title>
     <script
       type="module"
       src="https://ajax.googleapis.com/ajax/libs/model-viewer/3.3.0/model-viewer.min.js"
     ></script>
+    <script>
+      const timestampURL = "/lastUpdatedTime";
+      let initialLoadTime;
+
+      fetch(timestampURL)
+        .then((response) => response.json())
+        .then((json) => {
+          initialLoadTime = json.lastUpdatedTime;
+
+          console.log("Initial load time:", initialLoadTime);
+        })
+        .then(() => {
+          setInterval(() => {
+            // Get the last updated time from the server
+            fetch(timestampURL)
+              .then((response) => response.json())
+              .then((json) => {
+                if (json.lastUpdatedTime > initialLoadTime) {
+                  // If the model has been updated, reload the page
+                  location.reload();
+                }
+              });
+          }, 1000);
+        });
+    </script>
   </head>
   <body>
-    <h1>Welcome to my first webpage!</h1>
     <model-viewer
       camera-controls
       min-camera-orbit="auto 0deg auto"
