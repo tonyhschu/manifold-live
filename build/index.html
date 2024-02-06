@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>My First Webpage</title>
+    <script
+      type="module"
+      src="https://ajax.googleapis.com/ajax/libs/model-viewer/3.3.0/model-viewer.min.js"
+    ></script>
+  </head>
+  <body>
+    <h1>Welcome to my first webpage!</h1>
+    <model-viewer
+      camera-controls
+      min-camera-orbit="auto 0deg auto"
+      max-camera-orbit="auto 180deg auto"
+      shadow-intensity="1"
+      interaction-prompt="none"
+      alt="Editor 3D output"
+      src="/file"
+    >
+      <div class="center" slot="poster">
+        <p id="poster" style="text-align: center; line-height: 36px">
+          Loading...
+        </p>
+      </div>
+      <div id="animation">
+        <button type="button" id="play" class="icon pause"></button>
+        <input
+          type="range"
+          min="0"
+          max="1"
+          step="0.01"
+          value="0"
+          class="slider"
+          id="scrubber"
+        />
+      </div>
+    </model-viewer>
+  </body>
+</html>
