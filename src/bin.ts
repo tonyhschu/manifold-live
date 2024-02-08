@@ -2,6 +2,7 @@
 
 import express from "express";
 import fs from "fs";
+import md5 from "md5";
 import path from "path";
 import * as tsImport from "ts-import";
 import { Document, WebIO } from "@gltf-transform/core";
@@ -32,9 +33,28 @@ app.get("/", (_req, res) => {
   res.sendFile(__dirname + "/index.html");
 });
 
-app.get("/lastUpdatedTime", (_req, res) => {
-  // send the last updated time in a json object
-  res.json({ lastUpdatedTime });
+const defaultPushMessage = (message: string) => {
+  console.log("No client to push message to...");
+};
+let pushMessage: (message: string) => void = defaultPushMessage;
+
+//stackoverflow.com/questions/34657222/how-to-use-server-sent-events-in-express-js
+app.get("/reload", (req, res) => {
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders(); // flush the headers to establish SSE with client
+
+  pushMessage = (message: string) => {
+    res.write(`data: ${JSON.stringify({ message })}\n\n`);
+  };
+
+  // If client closes connection, stop sending events
+  res.on("close", () => {
+    pushMessage = defaultPushMessage;
+    res.end();
+  });
 });
 
 app.get("/file", (req, res) => {
@@ -65,10 +85,6 @@ async function initalizeManifold() {
 
   // ts-import
   const tsImport = await _dynamicImportTsImport;
-
-  const wasmSetupTime = performance.now() - initiationTime;
-
-  console.log(`Manifold WASM module loaded: ${wasmSetupTime}ms\n\n\n`);
 
   const { Manifold } = wasm;
 
@@ -145,6 +161,9 @@ async function initalizeManifold() {
     fs.writeFileSync("output.glb", buffer);
 
     lastUpdatedTime = new Date();
+
+    // Push the message to the client
+    pushMessage(`File updated: ${lastUpdatedTime}`);
   };
 
   return writeToBlob;
@@ -153,21 +172,23 @@ async function initalizeManifold() {
 initalizeManifold().then((writeToBlob) => {
   let timeoutId: ReturnType<typeof setTimeout> | undefined = undefined;
 
+  let md5Previous: string | null = null;
+
   const respondToChange = (eventType: string, filename: string | null) => {
     if (filename && eventType === "change") {
-      if (timeoutId) {
-        const bounceTime = performance.now() - initiationTime;
-
-        console.log(`bouncing...${bounceTime}ms`);
-      }
-
       clearTimeout(timeoutId);
       timeoutId = setTimeout(() => {
-        console.log(`Processing the file...${filename}`);
-        writeToBlob();
+        const md5Current = md5(fs.readFileSync(fullPath));
+
+        if (md5Current === md5Previous) {
+          return;
+        } else {
+          writeToBlob();
+          md5Previous = md5Current;
+        }
 
         clearTimeout(timeoutId);
-      }, 4000);
+      }, 300);
     }
   };
 

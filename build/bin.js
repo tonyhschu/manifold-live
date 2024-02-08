@@ -15,6 +15,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = __importDefault(require("express"));
 const fs_1 = __importDefault(require("fs"));
+const md5_1 = __importDefault(require("md5"));
 const path_1 = __importDefault(require("path"));
 const core_1 = require("@gltf-transform/core");
 const functions_1 = require("@gltf-transform/functions");
@@ -36,9 +37,25 @@ app.get("/", (_req, res) => {
     // res.send("Hello World!");
     res.sendFile(__dirname + "/index.html");
 });
-app.get("/lastUpdatedTime", (_req, res) => {
-    // send the last updated time in a json object
-    res.json({ lastUpdatedTime });
+const defaultPushMessage = (message) => {
+    console.log("No client to push message to...");
+};
+let pushMessage = defaultPushMessage;
+//stackoverflow.com/questions/34657222/how-to-use-server-sent-events-in-express-js
+app.get("/reload", (req, res) => {
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Connection", "keep-alive");
+    res.flushHeaders(); // flush the headers to establish SSE with client
+    pushMessage = (message) => {
+        res.write(`data: ${JSON.stringify({ message })}\n\n`);
+    };
+    // If client closes connection, stop sending events
+    res.on("close", () => {
+        pushMessage = defaultPushMessage;
+        res.end();
+    });
 });
 app.get("/file", (req, res) => {
     // res.sendFile(__dirname + "/manifold-blob.glb");
@@ -59,8 +76,6 @@ function initalizeManifold() {
         wasm.setup();
         // ts-import
         const tsImport = yield _dynamicImportTsImport;
-        const wasmSetupTime = performance.now() - initiationTime;
-        console.log(`Manifold WASM module loaded: ${wasmSetupTime}ms\n\n\n`);
         const { Manifold } = wasm;
         let cleanup;
         const writeToBlob = function () {
@@ -119,6 +134,8 @@ function initalizeManifold() {
                 // Write to disk
                 fs_1.default.writeFileSync("output.glb", buffer);
                 lastUpdatedTime = new Date();
+                // Push the message to the client
+                pushMessage(`File updated: ${lastUpdatedTime}`);
             });
         };
         return writeToBlob;
@@ -126,18 +143,21 @@ function initalizeManifold() {
 }
 initalizeManifold().then((writeToBlob) => {
     let timeoutId = undefined;
+    let md5Previous = null;
     const respondToChange = (eventType, filename) => {
         if (filename && eventType === "change") {
-            if (timeoutId) {
-                const bounceTime = performance.now() - initiationTime;
-                console.log(`bouncing...${bounceTime}ms`);
-            }
             clearTimeout(timeoutId);
             timeoutId = setTimeout(() => {
-                console.log(`Processing the file...${filename}`);
-                writeToBlob();
+                const md5Current = (0, md5_1.default)(fs_1.default.readFileSync(fullPath));
+                if (md5Current === md5Previous) {
+                    return;
+                }
+                else {
+                    writeToBlob();
+                    md5Previous = md5Current;
+                }
                 clearTimeout(timeoutId);
-            }, 4000);
+            }, 300);
         }
     };
     // The File Watcher Part

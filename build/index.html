@@ -10,26 +10,12 @@
       const timestampURL = "/lastUpdatedTime";
       let initialLoadTime;
 
-      fetch(timestampURL)
-        .then((response) => response.json())
-        .then((json) => {
-          initialLoadTime = json.lastUpdatedTime;
+      const eventSource = new EventSource("/reload");
 
-          console.log("Initial load time:", initialLoadTime);
-        })
-        .then(() => {
-          setInterval(() => {
-            // Get the last updated time from the server
-            fetch(timestampURL)
-              .then((response) => response.json())
-              .then((json) => {
-                if (json.lastUpdatedTime > initialLoadTime) {
-                  // If the model has been updated, reload the page
-                  location.reload();
-                }
-              });
-          }, 1000);
-        });
+      eventSource.onmessage = (event) => {
+        console.log("Received event:", event);
+        location.reload();
+      };
     </script>
   </head>
   <body>
