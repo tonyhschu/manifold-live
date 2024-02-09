@@ -22,12 +22,15 @@ export const loadTSModuleOnChange = async (
     useCache: false,
   });
 
+  const basename = path.basename(fullPath);
+  const basenameMJS = basename.replace(".ts", ".mjs");
+
   // Where did ts-import put the file?
   const outputFilePath = path.join(
     ".cache",
     "ts-import",
     workingDir,
-    "simpleCube.mjs"
+    basenameMJS
   );
 
   // Read the file

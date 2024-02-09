@@ -12,13 +12,51 @@
 
       const eventSource = new EventSource("/reload");
 
-      eventSource.onmessage = (event) => {
-        console.log("Received event:", event);
-        location.reload();
+      const showMessage = (message) => {
+        const messages = document.getElementById("messages");
+        messages.innerHTML = message;
       };
+
+      const clearMessage = () => {
+        const messages = document.getElementById("messages");
+        messages.innerHTML = "";
+      };
+
+      // eventSource.onmessage = (event) => {
+      //   console.log("Received event:", event);
+
+      //   const parsedData = JSON.parse(event.data);
+
+      //   switch (parsedData.type) {
+      //     case "error":
+      //       console.error("Error:", parsedData.message);
+      //       showMessage(`<pre class="error">${parsedData.message}</pre>`);
+      //       break;
+
+      //     case "success":
+      //       clearMessage();
+      //       location.reload();
+
+      //     default:
+      //       clearMessage();
+      //       console.log("Unknown event type:", event.type);
+      //       break;
+      //   }
+      // };
+
+      eventSource.addEventListener("error", (event) => {
+        console.error("Error:", event.data);
+        showMessage(`<pre class="error">${event.data}</pre>`);
+      });
+
+      eventSource.addEventListener("success", (event) => {
+        clearMessage();
+        location.reload();
+      });
     </script>
   </head>
   <body>
+    <div id="messages"></div>
     <model-viewer
       camera-controls
       min-camera-orbit="auto 0deg auto"

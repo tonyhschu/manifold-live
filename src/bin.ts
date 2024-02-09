@@ -24,6 +24,14 @@ if (!manifoldEntryPoint) {
   process.exit(1);
 }
 
+// Clean up the working directory
+if (fs.existsSync(workingDir + "/.cache")) {
+  fs.rmdirSync(workingDir + "/.cache", { recursive: true });
+}
+if (fs.existsSync(workingDir + "/output.glb")) {
+  fs.unlinkSync(workingDir + "/output.glb");
+}
+
 let lastUpdatedTime: Date | undefined = undefined;
 
 const fullPath = path.join(workingDir, manifoldEntryPoint);
@@ -33,10 +41,12 @@ app.get("/", (_req, res) => {
   res.sendFile(__dirname + "/index.html");
 });
 
-const defaultPushMessage = (message: string) => {
+type MessagePusher = (type: "success" | "error", message: string) => void;
+
+const defaultPushMessage: MessagePusher = (type, message) => {
   console.log("No client to push message to...");
 };
-let pushMessage: (message: string) => void = defaultPushMessage;
+let pushMessage: MessagePusher = defaultPushMessage;
 
 //stackoverflow.com/questions/34657222/how-to-use-server-sent-events-in-express-js
 app.get("/reload", (req, res) => {
@@ -46,8 +56,10 @@ app.get("/reload", (req, res) => {
   res.setHeader("Connection", "keep-alive");
   res.flushHeaders(); // flush the headers to establish SSE with client
 
-  pushMessage = (message: string) => {
-    res.write(`data: ${JSON.stringify({ message })}\n\n`);
+  pushMessage = (type, message) => {
+    console.log("pushMessage: ", { type, message });
+
+    res.write(`event: ${type}\ndata:${JSON.stringify({ type, message })}\n\n`);
   };
 
   // If client closes connection, stop sending events
@@ -92,6 +104,7 @@ async function initalizeManifold() {
 
   const writeToBlob = async function () {
     if (cleanup) {
+      console.log("Cleaning up...");
       cleanup();
     }
 
@@ -103,67 +116,81 @@ async function initalizeManifold() {
     cleanup = freshModule.cleanup;
     const userFunction = freshModule.default;
 
-    const result = userFunction(wasm);
+    try {
+      const result = userFunction(wasm);
+      // Cargo culting from: https://github.com/elalish/manifold/blob/3b8282e1d5cd3d6f801432e4140e9b40f41ecbf6/bindings/wasm/examples/model-viewer.html#L129
+      const manifoldMesh = result.getMesh();
 
-    // Cargo culting from: https://github.com/elalish/manifold/blob/3b8282e1d5cd3d6f801432e4140e9b40f41ecbf6/bindings/wasm/examples/model-viewer.html#L129
-    const manifoldMesh = result.getMesh();
+      const io = setupIO(new WebIO());
+      const doc = new Document();
+      const id2properties = new Map();
+      const to3mf = {
+        meshes: [],
+        components: [],
+        items: [],
+        precision: 7,
+        header: {
+          unit: "millimeter",
+          title: "ManifoldCAD.org model",
+          description: "ManifoldCAD.org model",
+          application: "ManifoldCAD.org",
+        },
+      } as To3MF;
 
-    const io = setupIO(new WebIO());
-    const doc = new Document();
-    const id2properties = new Map();
-    const to3mf = {
-      meshes: [],
-      components: [],
-      items: [],
-      precision: 7,
-      header: {
-        unit: "millimeter",
-        title: "ManifoldCAD.org model",
-        description: "ManifoldCAD.org model",
-        application: "ManifoldCAD.org",
-      },
-    } as To3MF;
+      // Cargo Culting from: https://github.com/elalish/manifold/blob/3b8282e1d5cd3d6f801432e4140e9b40f41ecbf6/bindings/wasm/examples/worker.ts#L765
+      const halfRoot2 = Math.sqrt(2) / 2;
+      const mm2m = 1 / 1000;
+      const wrapper = doc
+        .createNode("wrapper")
+        .setRotation([-halfRoot2, 0, 0, halfRoot2])
+        .setScale([mm2m, mm2m, mm2m]);
 
-    // Cargo Culting from: https://github.com/elalish/manifold/blob/3b8282e1d5cd3d6f801432e4140e9b40f41ecbf6/bindings/wasm/examples/worker.ts#L765
-    const halfRoot2 = Math.sqrt(2) / 2;
-    const mm2m = 1 / 1000;
-    const wrapper = doc
-      .createNode("wrapper")
-      .setRotation([-halfRoot2, 0, 0, halfRoot2])
-      .setScale([mm2m, mm2m, mm2m]);
+      doc.createScene().addChild(wrapper);
 
-    doc.createScene().addChild(wrapper);
+      const node = doc.createNode();
+      doc.createScene().addChild(node);
 
-    const node = doc.createNode();
-    doc.createScene().addChild(node);
+      const oldMesh = node.getMesh();
+      if (oldMesh) {
+        disposeMesh(oldMesh);
+      }
 
-    const oldMesh = node.getMesh();
-    if (oldMesh) {
-      disposeMesh(oldMesh);
+      const mesh = writeMesh(doc, manifoldMesh, id2properties);
+      node.setMesh(mesh);
+      addMesh(doc, to3mf, node, result);
+      wrapper.addChild(node);
+
+      await doc.transform(prune());
+
+      const glb = await io.writeBinary(doc);
+
+      const blob = new Blob([glb], { type: "application/octet-stream" });
+
+      // Turn blob into File
+      const arrayBuffer = await blob.arrayBuffer();
+      const buffer = Buffer.from(arrayBuffer);
+
+      // Write to disk
+      fs.writeFileSync("output.glb", buffer);
+
+      lastUpdatedTime = new Date();
+
+      // Push the message to the client
+      pushMessage("success", `File updated: ${lastUpdatedTime}`);
+    } catch (error) {
+      let message;
+
+      if (error instanceof Error) {
+        message = error.message;
+      } else {
+        message = String(error);
+      }
+
+      console.warn("Error in user code: ", message);
+
+      pushMessage("error", message);
+      return;
     }
-
-    const mesh = writeMesh(doc, manifoldMesh, id2properties);
-    node.setMesh(mesh);
-    addMesh(doc, to3mf, node, result);
-    wrapper.addChild(node);
-
-    await doc.transform(prune());
-
-    const glb = await io.writeBinary(doc);
-
-    const blob = new Blob([glb], { type: "application/octet-stream" });
-
-    // Turn blob into File
-    const arrayBuffer = await blob.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
-
-    // Write to disk
-    fs.writeFileSync("output.glb", buffer);
-
-    lastUpdatedTime = new Date();
-
-    // Push the message to the client
-    pushMessage(`File updated: ${lastUpdatedTime}`);
   };
 
   return writeToBlob;

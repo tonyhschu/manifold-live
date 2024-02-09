@@ -31,8 +31,10 @@ const loadTSModuleOnChange = (tsImport, fullPath) => __awaiter(void 0, void 0, v
         mode: tsImport.LoadMode.Compile,
         useCache: false,
     });
+    const basename = path_1.default.basename(fullPath);
+    const basenameMJS = basename.replace(".ts", ".mjs");
     // Where did ts-import put the file?
-    const outputFilePath = path_1.default.join(".cache", "ts-import", workingDir, "simpleCube.mjs");
+    const outputFilePath = path_1.default.join(".cache", "ts-import", workingDir, basenameMJS);
     // Read the file
     const outputFileContent = fs_1.default.readFileSync(outputFilePath, "utf-8");
     // Copy the file to a new location with a random name

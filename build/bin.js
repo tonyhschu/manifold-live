@@ -31,13 +31,20 @@ if (!manifoldEntryPoint) {
     console.error("Please provide a filename for the Manifold entry point. 111");
     process.exit(1);
 }
+// Clean up the working directory
+if (fs_1.default.existsSync(workingDir + "/.cache")) {
+    fs_1.default.rmdirSync(workingDir + "/.cache", { recursive: true });
+}
+if (fs_1.default.existsSync(workingDir + "/output.glb")) {
+    fs_1.default.unlinkSync(workingDir + "/output.glb");
+}
 let lastUpdatedTime = undefined;
 const fullPath = path_1.default.join(workingDir, manifoldEntryPoint);
 app.get("/", (_req, res) => {
     // res.send("Hello World!");
     res.sendFile(__dirname + "/index.html");
 });
-const defaultPushMessage = (message) => {
+const defaultPushMessage = (type, message) => {
     console.log("No client to push message to...");
 };
 let pushMessage = defaultPushMessage;
@@ -48,8 +55,9 @@ app.get("/reload", (req, res) => {
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Connection", "keep-alive");
     res.flushHeaders(); // flush the headers to establish SSE with client
-    pushMessage = (message) => {
-        res.write(`data: ${JSON.stringify({ message })}\n\n`);
+    pushMessage = (type, message) => {
+        console.log("pushMessage: ", { type, message });
+        res.write(`event: ${type}\ndata:${JSON.stringify({ type, message })}\n\n`);
     };
     // If client closes connection, stop sending events
     res.on("close", () => {
@@ -81,6 +89,7 @@ function initalizeManifold() {
         const writeToBlob = function () {
             return __awaiter(this, void 0, void 0, function* () {
                 if (cleanup) {
+                    console.log("Cleaning up...");
                     cleanup();
                 }
                 console.log(`\n\n\nProcessing the file...${manifoldEntryPoint}`);
@@ -89,53 +98,67 @@ function initalizeManifold() {
                 const freshModule = yield (0, moduleLoadingOnChange_1.loadTSModuleOnChange)(tsImport, fullPath);
                 cleanup = freshModule.cleanup;
                 const userFunction = freshModule.default;
-                const result = userFunction(wasm);
-                // Cargo culting from: https://github.com/elalish/manifold/blob/3b8282e1d5cd3d6f801432e4140e9b40f41ecbf6/bindings/wasm/examples/model-viewer.html#L129
-                const manifoldMesh = result.getMesh();
-                const io = (0, gltf_io_1.setupIO)(new core_1.WebIO());
-                const doc = new core_1.Document();
-                const id2properties = new Map();
-                const to3mf = {
-                    meshes: [],
-                    components: [],
-                    items: [],
-                    precision: 7,
-                    header: {
-                        unit: "millimeter",
-                        title: "ManifoldCAD.org model",
-                        description: "ManifoldCAD.org model",
-                        application: "ManifoldCAD.org",
-                    },
-                };
-                // Cargo Culting from: https://github.com/elalish/manifold/blob/3b8282e1d5cd3d6f801432e4140e9b40f41ecbf6/bindings/wasm/examples/worker.ts#L765
-                const halfRoot2 = Math.sqrt(2) / 2;
-                const mm2m = 1 / 1000;
-                const wrapper = doc
-                    .createNode("wrapper")
-                    .setRotation([-halfRoot2, 0, 0, halfRoot2])
-                    .setScale([mm2m, mm2m, mm2m]);
-                doc.createScene().addChild(wrapper);
-                const node = doc.createNode();
-                doc.createScene().addChild(node);
-                const oldMesh = node.getMesh();
-                if (oldMesh) {
-                    (0, gltf_io_1.disposeMesh)(oldMesh);
+                try {
+                    const result = userFunction(wasm);
+                    // Cargo culting from: https://github.com/elalish/manifold/blob/3b8282e1d5cd3d6f801432e4140e9b40f41ecbf6/bindings/wasm/examples/model-viewer.html#L129
+                    const manifoldMesh = result.getMesh();
+                    const io = (0, gltf_io_1.setupIO)(new core_1.WebIO());
+                    const doc = new core_1.Document();
+                    const id2properties = new Map();
+                    const to3mf = {
+                        meshes: [],
+                        components: [],
+                        items: [],
+                        precision: 7,
+                        header: {
+                            unit: "millimeter",
+                            title: "ManifoldCAD.org model",
+                            description: "ManifoldCAD.org model",
+                            application: "ManifoldCAD.org",
+                        },
+                    };
+                    // Cargo Culting from: https://github.com/elalish/manifold/blob/3b8282e1d5cd3d6f801432e4140e9b40f41ecbf6/bindings/wasm/examples/worker.ts#L765
+                    const halfRoot2 = Math.sqrt(2) / 2;
+                    const mm2m = 1 / 1000;
+                    const wrapper = doc
+                        .createNode("wrapper")
+                        .setRotation([-halfRoot2, 0, 0, halfRoot2])
+                        .setScale([mm2m, mm2m, mm2m]);
+                    doc.createScene().addChild(wrapper);
+                    const node = doc.createNode();
+                    doc.createScene().addChild(node);
+                    const oldMesh = node.getMesh();
+                    if (oldMesh) {
+                        (0, gltf_io_1.disposeMesh)(oldMesh);
+                    }
+                    const mesh = (0, gltf_io_1.writeMesh)(doc, manifoldMesh, id2properties);
+                    node.setMesh(mesh);
+                    (0, worker_1.addMesh)(doc, to3mf, node, result);
+                    wrapper.addChild(node);
+                    yield doc.transform((0, functions_1.prune)());
+                    const glb = yield io.writeBinary(doc);
+                    const blob = new Blob([glb], { type: "application/octet-stream" });
+                    // Turn blob into File
+                    const arrayBuffer = yield blob.arrayBuffer();
+                    const buffer = Buffer.from(arrayBuffer);
+                    // Write to disk
+                    fs_1.default.writeFileSync("output.glb", buffer);
+                    lastUpdatedTime = new Date();
+                    // Push the message to the client
+                    pushMessage("success", `File updated: ${lastUpdatedTime}`);
                 }
-                const mesh = (0, gltf_io_1.writeMesh)(doc, manifoldMesh, id2properties);
-                node.setMesh(mesh);
-                (0, worker_1.addMesh)(doc, to3mf, node, result);
-                wrapper.addChild(node);
-                yield doc.transform((0, functions_1.prune)());
-                const glb = yield io.writeBinary(doc);
-                const blob = new Blob([glb], { type: "application/octet-stream" });
-                // Turn blob into File
-                const arrayBuffer = yield blob.arrayBuffer();
-                const buffer = Buffer.from(arrayBuffer);
-                // Write to disk
-                fs_1.default.writeFileSync("output.glb", buffer);
-                lastUpdatedTime = new Date();
-                // Push the message to the client
-                pushMessage(`File updated: ${lastUpdatedTime}`);
+                catch (error) {
+                    let message;
+                    if (error instanceof Error) {
+                        message = error.message;
+                    }
+                    else {
+                        message = String(error);
+                    }
+                    console.warn("Error in user code: ", message);
+                    pushMessage("error", message);
+                    return;
+                }
             });
         };
         return writeToBlob;
