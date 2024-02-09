@@ -7,14 +7,13 @@
       src="https://ajax.googleapis.com/ajax/libs/model-viewer/3.3.0/model-viewer.min.js"
     ></script>
     <script>
-      const timestampURL = "/lastUpdatedTime";
-      let initialLoadTime;
-
       const eventSource = new EventSource("/reload");
 
       const showMessage = (message) => {
         const messages = document.getElementById("messages");
         messages.innerHTML = message;
+
+        document.getElementById("model-viewer").style.opacity = 0.1;
       };
 
       const clearMessage = () => {
@@ -22,42 +21,51 @@
         messages.innerHTML = "";
       };
 
-      // eventSource.onmessage = (event) => {
-      //   console.log("Received event:", event);
+      eventSource.addEventListener("message", (event) => {
+        const parsedData = JSON.parse(event.data);
 
-      //   const parsedData = JSON.parse(event.data);
+        if (parsedData.type === "reload") {
+          location.reload();
+        }
 
-      //   switch (parsedData.type) {
-      //     case "error":
-      //       console.error("Error:", parsedData.message);
-      //       showMessage(`<pre class="error">${parsedData.message}</pre>`);
-      //       break;
-
-      //     case "success":
-      //       clearMessage();
-      //       location.reload();
-
-      //     default:
-      //       clearMessage();
-      //       console.log("Unknown event type:", event.type);
-      //       break;
-      //   }
-      // };
-
-      eventSource.addEventListener("error", (event) => {
-        console.error("Error:", event.data);
-        showMessage(`<pre class="error">${event.data}</pre>`);
+        if (parsedData.type === "error") {
+          console.error("Error:", parsedData.message);
+          showMessage(`<pre class="error">Error: ${parsedData.message}</pre>`);
+        }
       });
 
-      eventSource.addEventListener("success", (event) => {
-        clearMessage();
-        location.reload();
-      });
+      eventSource.onerror = (err) => {
+        showMessage(`<pre class="error">Connection to Server Failed.</pre>`);
+        console.error("EventSource failed:", err);
+      };
+
+      eventSource.onopen = () => {
+        fetch("/status")
+          .then((response) => response.json())
+          .then((data) => {
+            console.log("Status:", data);
+            if (
+              data.mostRecentMessage &&
+              data.mostRecentMessage.type === "error"
+            ) {
+              showMessage(
+                `<pre class="error">Error: ${data.mostRecentMessage.message}</pre>`
+              );
+            }
+          })
+          .catch((err) => {
+            console.error("Failed to fetch status:", err);
+            showMessage(
+              `<pre class="error">Failed to fetch status: ${err}</pre>`
+            );
+          });
+      };
     </script>
   </head>
   <body>
     <div id="messages"></div>
     <model-viewer
+      id="model-viewer"
       camera-controls
       min-camera-orbit="auto 0deg auto"
       max-camera-orbit="auto 180deg auto"

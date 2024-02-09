@@ -41,10 +41,20 @@ app.get("/", (_req, res) => {
   res.sendFile(__dirname + "/index.html");
 });
 
-type MessagePusher = (type: "success" | "error", message: string) => void;
+type MessagePusher = (
+  id: number,
+  type: "reload" | "error",
+  message: string
+) => void;
 
-const defaultPushMessage: MessagePusher = (type, message) => {
-  console.log("No client to push message to...");
+let mostRecentMessage: {
+  id: number;
+  type: "reload" | "error";
+  message: string;
+} | null = null;
+
+const defaultPushMessage: MessagePusher = (id, type, message) => {
+  mostRecentMessage = { id, type, message };
 };
 let pushMessage: MessagePusher = defaultPushMessage;
 
@@ -56,16 +66,23 @@ app.get("/reload", (req, res) => {
   res.setHeader("Connection", "keep-alive");
   res.flushHeaders(); // flush the headers to establish SSE with client
 
-  pushMessage = (type, message) => {
-    console.log("pushMessage: ", { type, message });
-
-    res.write(`event: ${type}\ndata:${JSON.stringify({ type, message })}\n\n`);
+  pushMessage = (id, type, message) => {
+    console.log("pushMessage: ", { id, type, message });
+    mostRecentMessage = { id, type, message };
+    res.write(`event: message\ndata:${JSON.stringify({ type, message })}\n\n`);
   };
 
   // If client closes connection, stop sending events
   res.on("close", () => {
     pushMessage = defaultPushMessage;
     res.end();
+  });
+});
+
+app.get("/status", (req, res) => {
+  res.json({
+    lastUpdatedTime,
+    mostRecentMessage,
   });
 });
 
@@ -89,6 +106,9 @@ const _dynamicImportTsImport = Function(
   'return import("ts-import")'
 )() as Promise<typeof import("ts-import")>;
 
+let blobCleanUp: () => void | undefined;
+let messageCounter = 0;
+
 async function initalizeManifold() {
   // Manifold 3D WASM Module
   const Module = await _dynamicImportManifold3D;
@@ -100,12 +120,10 @@ async function initalizeManifold() {
 
   const { Manifold } = wasm;
 
-  let cleanup: () => void | undefined;
-
   const writeToBlob = async function () {
-    if (cleanup) {
+    if (blobCleanUp) {
       console.log("Cleaning up...");
-      cleanup();
+      blobCleanUp();
     }
 
     console.log(`\n\n\nProcessing the file...${manifoldEntryPoint}`);
@@ -113,7 +131,7 @@ async function initalizeManifold() {
     // Hot reload the user's manifold code
     // Note: loadTSModuleOnChange has much shenanigans
     const freshModule = await loadTSModuleOnChange(tsImport, fullPath);
-    cleanup = freshModule.cleanup;
+    blobCleanUp = freshModule.cleanup;
     const userFunction = freshModule.default;
 
     try {
@@ -176,7 +194,8 @@ async function initalizeManifold() {
       lastUpdatedTime = new Date();
 
       // Push the message to the client
-      pushMessage("success", `File updated: ${lastUpdatedTime}`);
+      pushMessage(messageCounter, "reload", `File updated: ${lastUpdatedTime}`);
+      messageCounter++;
     } catch (error) {
       let message;
 
@@ -188,7 +207,8 @@ async function initalizeManifold() {
 
       console.warn("Error in user code: ", message);
 
-      pushMessage("error", message);
+      pushMessage(messageCounter, "error", message);
+      messageCounter++;
       return;
     }
   };
@@ -226,3 +246,23 @@ initalizeManifold().then((writeToBlob) => {
     writeToBlob();
   }
 });
+
+const exitCleanup = () => {
+  console.log("Exit. Cleaning up...");
+
+  if (fs.existsSync(workingDir + "/.cache")) {
+    fs.rmdirSync(workingDir + "/.cache", { recursive: true });
+  }
+  if (fs.existsSync(workingDir + "/output.glb")) {
+    fs.unlinkSync(workingDir + "/output.glb");
+  }
+  if (blobCleanUp) {
+    blobCleanUp();
+  }
+
+  process.exit(0);
+};
+
+// Clean up before process exits
+process.on("exit", exitCleanup);
+process.on("SIGINT", exitCleanup);

@@ -44,20 +44,19 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.addMesh = void 0;
 const core_1 = require("@gltf-transform/core");
 const extensions_1 = require("@gltf-transform/extensions");
-// import {
-//   fileForContentTypes,
-//   FileForRelThumbnail,
-//   to3dmodel,
-// } from "@jscadui/3mf-export";
-// import { strToU8, Zippable, zipSync } from "fflate";
+const _3mf_export_1 = require("@jscadui/3mf-export");
+const fflate_1 = require("fflate");
 const glMatrix = __importStar(require("gl-matrix"));
+const manifold_1 = __importDefault(require("./built/manifold"));
 const gltf_io_1 = require("./gltf-io");
-// const module = (await Module()) as WorkerStatic;
-// module.setup();
+const module = (await (0, manifold_1.default)());
+module.setup();
 // Faster on modern browsers than Float32Array
 glMatrix.glMatrix.setMatrixArrayType(Array);
 const io = (0, gltf_io_1.setupIO)(new core_1.WebIO());
@@ -148,28 +147,24 @@ const exposedFunctions = toplevelConstructors.concat(toplevel);
 // Note that this only fixes memory leak across different runs: the memory
 // will only be freed when the compilation finishes.
 const memoryRegistry = new Array();
-// function addMembers(
-//   className: string,
-//   methodNames: Array<string>,
-//   areStatic: boolean
-// ) {
-//   //@ts-ignore
-//   const cls = module[className];
-//   const obj = areStatic ? cls : cls.prototype;
-//   for (const name of methodNames) {
-//     const originalFn = obj[name];
-//     obj[name] = function (...args: any) {
-//       //@ts-ignore
-//       const result = originalFn(...args);
-//       memoryRegistry.push(result);
-//       return result;
-//     };
-//   }
-// }
-// addMembers("Manifold", manifoldMemberFunctions, false);
-// addMembers("Manifold", manifoldStaticFunctions, true);
-// addMembers("CrossSection", crossSectionMemberFunctions, false);
-// addMembers("CrossSection", crossSectionStaticFunctions, true);
+function addMembers(className, methodNames, areStatic) {
+    //@ts-ignore
+    const cls = module[className];
+    const obj = areStatic ? cls : cls.prototype;
+    for (const name of methodNames) {
+        const originalFn = obj[name];
+        obj[name] = function (...args) {
+            //@ts-ignore
+            const result = originalFn(...args);
+            memoryRegistry.push(result);
+            return result;
+        };
+    }
+}
+addMembers("Manifold", manifoldMemberFunctions, false);
+addMembers("Manifold", manifoldStaticFunctions, true);
+addMembers("CrossSection", crossSectionMemberFunctions, false);
+addMembers("CrossSection", crossSectionStaticFunctions, true);
 for (const name of toplevelConstructors) {
     //@ts-ignore
     const originalFn = module[name];
@@ -180,14 +175,17 @@ for (const name of toplevelConstructors) {
         return result;
     };
 }
-// module.cleanup = function () {
-//   for (const obj of memoryRegistry) {
-//     // decompose result is an array of manifolds
-//     if (obj instanceof Array) for (const elem of obj) elem.delete();
-//     else obj.delete();
-//   }
-//   memoryRegistry.length = 0;
-// };
+module.cleanup = function () {
+    for (const obj of memoryRegistry) {
+        // decompose result is an array of manifolds
+        if (obj instanceof Array)
+            for (const elem of obj)
+                elem.delete();
+        else
+            obj.delete();
+    }
+    memoryRegistry.length = 0;
+};
 // Debug setup to show source meshes
 let ghost = false;
 const shown = new Map();
@@ -252,67 +250,88 @@ class GLTFNode {
         return this._parent;
     }
 }
-// module.GLTFNode = GLTFNode;
+module.GLTFNode = GLTFNode;
 const globalDefaults = Object.assign({}, GLOBAL_DEFAULTS);
-// module.setMaterial = (manifold: Manifold, material: GLTFMaterial): Manifold => {
-//   const out = manifold.asOriginal();
-//   id2material.set(out.originalID(), material);
-//   return out;
-// };
-// module.setMorphStart = (manifold: Manifold, func: (v: Vec3) => void): void => {
-//   const morph = manifold2morph.get(manifold);
-//   if (morph != null) {
-//     morph.start = func;
-//   } else {
-//     manifold2morph.set(manifold, { start: func });
-//   }
-// };
-// module.setMorphEnd = (manifold: Manifold, func: (v: Vec3) => void): void => {
-//   const morph = manifold2morph.get(manifold);
-//   if (morph != null) {
-//     morph.end = func;
-//   } else {
-//     manifold2morph.set(manifold, { end: func });
-//   }
-// };
-// function debug(manifold: Manifold, map: Map<number, Mesh>) {
-//   let result = manifold.asOriginal();
-//   map.set(result.originalID(), result.getMesh());
-//   return result;
-// }
-// module.show = (manifold) => {
-//   return debug(manifold, shown);
-// };
-// module.only = (manifold) => {
-//   ghost = true;
-//   return debug(manifold, singles);
-// };
+module.setMaterial = (manifold, material) => {
+    const out = manifold.asOriginal();
+    id2material.set(out.originalID(), material);
+    return out;
+};
+module.setMorphStart = (manifold, func) => {
+    const morph = manifold2morph.get(manifold);
+    if (morph != null) {
+        morph.start = func;
+    }
+    else {
+        manifold2morph.set(manifold, { start: func });
+    }
+};
+module.setMorphEnd = (manifold, func) => {
+    const morph = manifold2morph.get(manifold);
+    if (morph != null) {
+        morph.end = func;
+    }
+    else {
+        manifold2morph.set(manifold, { end: func });
+    }
+};
+function debug(manifold, map) {
+    let result = manifold.asOriginal();
+    map.set(result.originalID(), result.getMesh());
+    return result;
+}
+module.show = (manifold) => {
+    return debug(manifold, shown);
+};
+module.only = (manifold) => {
+    ghost = true;
+    return debug(manifold, singles);
+};
 // Setup complete
-// self.postMessage(null);
-// if (self.console) {
-//   const oldLog = self.console.log;
-//   self.console.log = function (...args) {
-//     let message = "";
-//     for (const arg of args) {
-//       if (arg == null) {
-//         message += "undefined";
-//       } else if (typeof arg == "object") {
-//         message += JSON.stringify(arg, null, 4);
-//       } else {
-//         message += arg.toString();
-//       }
-//     }
-//     self.postMessage({ log: message });
-//     oldLog(...args);
-//   };
-// }
+self.postMessage(null);
+if (self.console) {
+    const oldLog = self.console.log;
+    self.console.log = function (...args) {
+        let message = "";
+        for (const arg of args) {
+            if (arg == null) {
+                message += "undefined";
+            }
+            else if (typeof arg == "object") {
+                message += JSON.stringify(arg, null, 4);
+            }
+            else {
+                message += arg.toString();
+            }
+        }
+        self.postMessage({ log: message });
+        oldLog(...args);
+    };
+}
 // Swallow informational logs in testing framework
 function log(...args) {
-    console.log(...args);
-    // if (self.console) {
-    //   self.console.log(...args);
-    // }
+    if (self.console) {
+        self.console.log(...args);
+    }
 }
+self.onmessage = (e) => __awaiter(void 0, void 0, void 0, function* () {
+    const content = "const globalDefaults = {};\n" +
+        e.data +
+        '\nreturn exportModels(globalDefaults, typeof result === "undefined" ? undefined : result);\n';
+    try {
+        const f = new Function("exportModels", "glMatrix", "module", ...exposedFunctions, content);
+        yield f(exportModels, glMatrix, module, //@ts-ignore
+        ...exposedFunctions.map((name) => module[name]));
+    }
+    catch (error) {
+        console.log(error.toString());
+        self.postMessage({ objectURL: null });
+    }
+    finally {
+        module.cleanup();
+        cleanup();
+    }
+});
 function euler2quat(rotation) {
     const { quat } = glMatrix;
     const deg2rad = Math.PI / 180;
@@ -534,7 +553,6 @@ function addMesh(doc, to3mf, node, manifold, backupMaterial = {}) {
         node.addChild(debugNode);
     }
 }
-exports.addMesh = addMesh;
 function cloneNode(toNode, fromNode) {
     toNode.setMesh(fromNode.getMesh());
     fromNode.listChildren().forEach((child) => {
@@ -692,20 +710,20 @@ function exportModels(defaults, manifold) {
         }
         const glb = yield io.writeBinary(doc);
         const blobGLB = new Blob([glb], { type: "application/octet-stream" });
-        // const fileForRelThumbnail = new FileForRelThumbnail();
-        // fileForRelThumbnail.add3dModel('3D/3dmodel.model')
-        // const model = to3dmodel(to3mf);
-        // const files: Zippable = {};
-        // files['3D/3dmodel.model'] = strToU8(model);
-        // files[fileForContentTypes.name] = strToU8(fileForContentTypes.content);
-        // files[fileForRelThumbnail.name] = strToU8(fileForRelThumbnail.content);
-        // const zipFile = zipSync(files);
-        // const blob3MF = new Blob(
-        //     [zipFile],
-        //     {type: 'application/vnd.ms-package.3dmanufacturing-3dmodel+xml'});
-        // self.postMessage({
-        //   glbURL: URL.createObjectURL(blobGLB),
-        //   threeMFURL: URL.createObjectURL(blob3MF)
-        // });
+        const fileForRelThumbnail = new _3mf_export_1.FileForRelThumbnail();
+        fileForRelThumbnail.add3dModel("3D/3dmodel.model");
+        const model = (0, _3mf_export_1.to3dmodel)(to3mf);
+        const files = {};
+        files["3D/3dmodel.model"] = (0, fflate_1.strToU8)(model);
+        files[_3mf_export_1.fileForContentTypes.name] = (0, fflate_1.strToU8)(_3mf_export_1.fileForContentTypes.content);
+        files[fileForRelThumbnail.name] = (0, fflate_1.strToU8)(fileForRelThumbnail.content);
+        const zipFile = (0, fflate_1.zipSync)(files);
+        const blob3MF = new Blob([zipFile], {
+            type: "application/vnd.ms-package.3dmanufacturing-3dmodel+xml",
+        });
+        self.postMessage({
+            glbURL: URL.createObjectURL(blobGLB),
+            threeMFURL: URL.createObjectURL(blob3MF),
+        });
     });
 }

@@ -44,8 +44,9 @@ app.get("/", (_req, res) => {
     // res.send("Hello World!");
     res.sendFile(__dirname + "/index.html");
 });
-const defaultPushMessage = (type, message) => {
-    console.log("No client to push message to...");
+let mostRecentMessage = null;
+const defaultPushMessage = (id, type, message) => {
+    mostRecentMessage = { id, type, message };
 };
 let pushMessage = defaultPushMessage;
 //stackoverflow.com/questions/34657222/how-to-use-server-sent-events-in-express-js
@@ -55,14 +56,21 @@ app.get("/reload", (req, res) => {
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Connection", "keep-alive");
     res.flushHeaders(); // flush the headers to establish SSE with client
-    pushMessage = (type, message) => {
-        console.log("pushMessage: ", { type, message });
-        res.write(`event: ${type}\ndata:${JSON.stringify({ type, message })}\n\n`);
+    pushMessage = (id, type, message) => {
+        console.log("pushMessage: ", { id, type, message });
+        mostRecentMessage = { id, type, message };
+        res.write(`event: message\ndata:${JSON.stringify({ type, message })}\n\n`);
     };
     // If client closes connection, stop sending events
     res.on("close", () => {
         pushMessage = defaultPushMessage;
         res.end();
+    });
+});
+app.get("/status", (req, res) => {
+    res.json({
+        lastUpdatedTime,
+        mostRecentMessage,
     });
 });
 app.get("/file", (req, res) => {
@@ -76,6 +84,8 @@ const initiationTime = performance.now();
 // https://github.com/microsoft/TypeScript/issues/43329#issuecomment-1669659858
 const _dynamicImportManifold3D = Function('return import("manifold-3d")')();
 const _dynamicImportTsImport = Function('return import("ts-import")')();
+let blobCleanUp;
+let messageCounter = 0;
 function initalizeManifold() {
     return __awaiter(this, void 0, void 0, function* () {
         // Manifold 3D WASM Module
@@ -85,18 +95,17 @@ function initalizeManifold() {
         // ts-import
         const tsImport = yield _dynamicImportTsImport;
         const { Manifold } = wasm;
-        let cleanup;
         const writeToBlob = function () {
             return __awaiter(this, void 0, void 0, function* () {
-                if (cleanup) {
+                if (blobCleanUp) {
                     console.log("Cleaning up...");
-                    cleanup();
+                    blobCleanUp();
                 }
                 console.log(`\n\n\nProcessing the file...${manifoldEntryPoint}`);
                 // Hot reload the user's manifold code
                 // Note: loadTSModuleOnChange has much shenanigans
                 const freshModule = yield (0, moduleLoadingOnChange_1.loadTSModuleOnChange)(tsImport, fullPath);
-                cleanup = freshModule.cleanup;
+                blobCleanUp = freshModule.cleanup;
                 const userFunction = freshModule.default;
                 try {
                     const result = userFunction(wasm);
@@ -145,7 +154,8 @@ function initalizeManifold() {
                     fs_1.default.writeFileSync("output.glb", buffer);
                     lastUpdatedTime = new Date();
                     // Push the message to the client
-                    pushMessage("success", `File updated: ${lastUpdatedTime}`);
+                    pushMessage(messageCounter, "reload", `File updated: ${lastUpdatedTime}`);
+                    messageCounter++;
                 }
                 catch (error) {
                     let message;
@@ -156,7 +166,8 @@ function initalizeManifold() {
                         message = String(error);
                     }
                     console.warn("Error in user code: ", message);
-                    pushMessage("error", message);
+                    pushMessage(messageCounter, "error", message);
+                    messageCounter++;
                     return;
                 }
             });
@@ -189,3 +200,19 @@ initalizeManifold().then((writeToBlob) => {
         writeToBlob();
     }
 });
+const exitCleanup = () => {
+    console.log("Exit. Cleaning up...");
+    if (fs_1.default.existsSync(workingDir + "/.cache")) {
+        fs_1.default.rmdirSync(workingDir + "/.cache", { recursive: true });
+    }
+    if (fs_1.default.existsSync(workingDir + "/output.glb")) {
+        fs_1.default.unlinkSync(workingDir + "/output.glb");
+    }
+    if (blobCleanUp) {
+        blobCleanUp();
+    }
+    process.exit(0);
+};
+// Clean up before process exits
+process.on("exit", exitCleanup);
+process.on("SIGINT", exitCleanup);
