@@ -39,7 +39,7 @@ const loadTSModuleOnChange = (tsImport, fullPath) => __awaiter(void 0, void 0, v
     const outputFileContent = fs_1.default.readFileSync(outputFilePath, "utf-8");
     // Copy the file to a new location with a random name
     const randomName = Math.random().toString(36).substring(7);
-    const freshFileName = `${randomName}.mjs`;
+    const freshFileName = `__${randomName}.mjs`;
     const freshFilePath = path_1.default.join(workingDir, freshFileName);
     fs_1.default.writeFileSync(freshFilePath, outputFileContent);
     // Import the file with the random name

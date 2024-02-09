@@ -38,7 +38,7 @@ export const loadTSModuleOnChange = async (
 
   // Copy the file to a new location with a random name
   const randomName = Math.random().toString(36).substring(7);
-  const freshFileName = `${randomName}.mjs`;
+  const freshFileName = `__${randomName}.mjs`;
   const freshFilePath = path.join(workingDir, freshFileName);
   fs.writeFileSync(freshFilePath, outputFileContent);
 
