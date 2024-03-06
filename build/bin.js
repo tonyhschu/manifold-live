@@ -109,6 +109,9 @@ function initalizeManifold() {
                 const userFunction = freshModule.default;
                 try {
                     const result = userFunction(wasm);
+                    if (!(result instanceof Manifold)) {
+                        throw new Error("The user function must return a Manifold instance.");
+                    }
                     // Cargo culting from: https://github.com/elalish/manifold/blob/3b8282e1d5cd3d6f801432e4140e9b40f41ecbf6/bindings/wasm/examples/model-viewer.html#L129
                     const manifoldMesh = result.getMesh();
                     const io = (0, gltf_io_1.setupIO)(new core_1.WebIO());
